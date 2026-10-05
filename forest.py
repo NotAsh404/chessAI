@@ -1,4 +1,4 @@
-# Cross validation Balance Accuracy = 93.63 %
+# Cross validation Balance Accuracy = 93.46 %
 import numpy as np
 import pandas as pd
 from sklearn.tree import DecisionTreeClassifier
@@ -62,6 +62,112 @@ def explore_trees(X, y):
                 report(f"{criterion} depth={max_depth} min_leaf={min_leaf}", res)
 
 
+def entropy(counts):
+    """Entropy (in bits) of class-count vectors along the last axis:
+    H = -sum p * log2(p), with 0 * log(0) taken as 0."""
+    counts = np.asarray(counts, dtype=float)
+    totals = counts.sum(axis=-1, keepdims=True)
+    p = np.divide(counts, totals, out=np.zeros_like(counts), where=totals > 0)
+    logp = np.log2(p, out=np.zeros_like(p), where=p > 0)
+    return -(p * logp).sum(axis=-1)
+
+
+class Node:
+    """Leaf if feature is None (predicts `label`), otherwise a binary split:
+    samples with x[feature] <= threshold go left, the rest go right."""
+
+    def __init__(self, label, feature=None, threshold=None, left=None, right=None):
+        self.label = label
+        self.feature = feature
+        self.threshold = threshold
+        self.left = left
+        self.right = right
+
+
+class ID3Tree:
+    """Own decision tree (bonus). ID3: at each node choose the split with the
+    highest information gain = H(parent) - weighted average H(children), then
+    recurse. Our features are continuous, so each feature is split into two
+    branches at a threshold (the C4.5 extension of ID3); every midpoint between
+    consecutive sorted values is tried. Stops when a node is pure, max_depth is
+    reached, a child would get < min_samples_leaf samples, or no split gains
+    information. max_features = features considered per split (for forests)."""
+
+    def __init__(self, max_depth=None, min_samples_leaf=1, max_features=None,
+                 random_state=None):
+        self.max_depth = max_depth
+        self.min_samples_leaf = min_samples_leaf
+        self.max_features = max_features
+        self.random_state = random_state
+
+    def fit(self, X, y):
+        self.classes_, y_idx = np.unique(y, return_inverse=True)
+        self.n_classes = len(self.classes_)
+        self.rng = np.random.default_rng(self.random_state)
+        self.root = self._build(X, y_idx, depth=0)
+        return self
+
+    def _best_split(self, X, y, counts):
+        n, n_features = X.shape
+        parent_h = entropy(counts)
+        features = np.arange(n_features)
+        if self.max_features == "sqrt":
+            k = max(1, int(np.sqrt(n_features)))
+            features = self.rng.choice(n_features, k, replace=False)
+
+        best_gain, best_feature, best_threshold = 0.0, None, None
+        n_left = np.arange(1, n)                  # split after position i -> i+1 on left
+        n_right = n - n_left
+        for f in features:
+            order = np.argsort(X[:, f], kind="stable")
+            xs, ys = X[order, f], y[order]
+            # left_counts[i] = class counts of the first i+1 sorted samples
+            left_counts = np.cumsum(np.eye(self.n_classes)[ys], axis=0)[:-1]
+            right_counts = counts - left_counts
+            children_h = (n_left * entropy(left_counts) + n_right * entropy(right_counts)) / n
+            gain = parent_h - children_h
+            # only split between different values, and respect min_samples_leaf
+            valid = ((xs[:-1] < xs[1:]) & (n_left >= self.min_samples_leaf)
+                     & (n_right >= self.min_samples_leaf))
+            if not valid.any():
+                continue
+            gain[~valid] = -1
+            i = gain.argmax()
+            if gain[i] > best_gain:
+                best_gain, best_feature = gain[i], f
+                best_threshold = (xs[i] + xs[i + 1]) / 2
+        return best_feature, best_threshold
+
+    def _build(self, X, y, depth):
+        counts = np.bincount(y, minlength=self.n_classes)
+        label = counts.argmax()                   # majority class
+        if (counts.max() == len(y)                # pure node
+                or (self.max_depth is not None and depth >= self.max_depth)
+                or len(y) < 2 * self.min_samples_leaf):
+            return Node(label)
+        feature, threshold = self._best_split(X, y, counts)
+        if feature is None:                       # no split gains information
+            return Node(label)
+        go_left = X[:, feature] <= threshold
+        return Node(label, feature, threshold,
+                    self._build(X[go_left], y[go_left], depth + 1),
+                    self._build(X[~go_left], y[~go_left], depth + 1))
+
+    def predict(self, X):
+        out = np.empty(len(X), dtype=int)
+        self._predict(self.root, X, np.arange(len(X)), out)
+        return self.classes_[out]
+
+    def _predict(self, node, X, idx, out):
+        # send all samples down the tree together, splitting the index array
+        if node.feature is None:
+            out[idx] = node.label
+            return
+        go_left = X[idx, node.feature] <= node.threshold
+        self._predict(node.left, X, idx[go_left], out)
+        self._predict(node.right, X, idx[~go_left], out)
+
+
 class Forest:
     """Hand-built random forest. Each tree is trained on:
       - a bootstrap sample of the rows (drawn with replacement), and
@@ -69,8 +175,9 @@ class Forest:
     Prediction is a simple majority vote between the trees."""
 
     def __init__(self, n_trees=100, feature_frac=0.6, max_depth=None,
-                 min_samples_leaf=1, split_features=None, seed=SEED):
+                 min_samples_leaf=1, split_features=None, own_tree=False, seed=SEED):
         self.n_trees = n_trees
+        self.own_tree = own_tree  # True: use our ID3Tree instead of sklearn's tree
         self.feature_frac = feature_frac
         self.max_depth = max_depth
         self.min_samples_leaf = min_samples_leaf
@@ -86,7 +193,8 @@ class Forest:
         for _ in range(self.n_trees):
             rows = rng.integers(0, n_samples, n_samples)           # bootstrap
             cols = np.sort(rng.choice(n_features, n_keep, replace=False))
-            tree = DecisionTreeClassifier(
+            tree_class = ID3Tree if self.own_tree else DecisionTreeClassifier
+            tree = tree_class(
                 max_depth=self.max_depth, min_samples_leaf=self.min_samples_leaf,
                 max_features=self.split_features,
                 random_state=int(rng.integers(1_000_000_000)))
@@ -127,8 +235,12 @@ EXPLORE = False  # set True to rerun the tree/forest hyperparameter searches (~2
 
 # Best settings found by explore_forests: 100 trees, 60% of features per tree,
 # fully grown trees. More trees (200) or limiting depth did not help.
+# Bonus: the final forest is built from our own ID3Tree instead of sklearn's.
+# A single ID3Tree scores the same in CV as sklearn's entropy tree
+# (91.29% vs 91.20% balanced accuracy, fully grown), which checks it is correct.
 def best_forest():
-    return Forest(n_trees=100, feature_frac=0.6, max_depth=None, min_samples_leaf=1)
+    return Forest(n_trees=100, feature_frac=0.6, max_depth=None, min_samples_leaf=1,
+                  own_tree=True)
 
 
 if __name__ == "__main__":
