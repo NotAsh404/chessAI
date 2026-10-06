@@ -16,8 +16,6 @@ def load_data():
 
 
 def make_folds(y, k=5, seed=SEED):
-    """Stratified k-fold, coded by hand: shuffle each class's indices and deal
-    them round-robin into k folds so every fold has the same class mix."""
     rng = np.random.default_rng(seed)
     folds = [[] for _ in range(k)]
     for cls in np.unique(y):
@@ -26,11 +24,9 @@ def make_folds(y, k=5, seed=SEED):
         for i, sample in enumerate(idx):
             folds[i % k].append(sample)
     return [np.array(f) for f in folds]
-
+#stratified k-fold - shuffle each classs indices and deal them round-robin into k folds so every fold has the same class mix
 
 def cross_validate(make_model, X, y, k=5, seed=SEED):
-    """Train on k-1 folds, score on the held-out fold, repeat k times.
-    make_model is a function returning a fresh, untrained model."""
     folds = make_folds(y, k, seed)
     scores = {"balanced_acc": [], "acc": [], "macro_f1": []}
     for i in range(k):
@@ -43,6 +39,7 @@ def cross_validate(make_model, X, y, k=5, seed=SEED):
         scores["acc"].append(accuracy_score(y[val_idx], pred))
         scores["macro_f1"].append(f1_score(y[val_idx], pred, average="macro"))
     return {name: (np.mean(v), np.std(v)) for name, v in scores.items()}
+#trains on k-1 folds, the score is held-out on fold, repeat k times and make_model is a function returning a fresh, untrained model.
 
 
 def report(name, res):
@@ -52,7 +49,7 @@ def report(name, res):
 
 
 def explore_trees(X, y):
-    print("--- Single decision trees ---")
+    print("Single decision trees")
     for criterion in ["gini", "entropy"]:
         for max_depth in [None, 5, 8, 12]:
             for min_leaf in [1, 5, 20]:
@@ -63,18 +60,16 @@ def explore_trees(X, y):
 
 
 def entropy(counts):
-    """Entropy (in bits) of class-count vectors along the last axis:
-    H = -sum p * log2(p), with 0 * log(0) taken as 0."""
     counts = np.asarray(counts, dtype=float)
     totals = counts.sum(axis=-1, keepdims=True)
     p = np.divide(counts, totals, out=np.zeros_like(counts), where=totals > 0)
     logp = np.log2(p, out=np.zeros_like(p), where=p > 0)
     return -(p * logp).sum(axis=-1)
+#entropy of class-count vectors along the last axis: H = -sum p * log2(p), with 0 * log(0) taken as 0
 
 
 class Node:
-    """Leaf if feature is None (predicts `label`), otherwise a binary split:
-    samples with x[feature] <= threshold go left, the rest go right."""
+#if the feature is none (predicts `label`), otherwise a binary split - samples with x[feature] <= threshold go left, the rest go right.
 
     def __init__(self, label, feature=None, threshold=None, left=None, right=None):
         self.label = label
@@ -85,13 +80,10 @@ class Node:
 
 
 class ID3Tree:
-    """Own decision tree (bonus). ID3: at each node choose the split with the
-    highest information gain = H(parent) - weighted average H(children), then
-    recurse. Our features are continuous, so each feature is split into two
-    branches at a threshold (the C4.5 extension of ID3); every midpoint between
-    consecutive sorted values is tried. Stops when a node is pure, max_depth is
-    reached, a child would get < min_samples_leaf samples, or no split gains
-    information. max_features = features considered per split (for forests)."""
+    #our decision tree (bonus). ID3: at each node choose the split with the highest information gain = H(parent) - weighted average H(children), then recurse. 
+    #our features are continuous, so each feature is split into two branches at a threshold (the C4.5 extension of ID3); every midpoint between consecutive sorted values is tried. 
+    #stops when a node is pure, max_depth is reached, a child would get < min_samples_leaf samples, or no split gains information
+    #max_features = features considered per split (for forests)
 
     def __init__(self, max_depth=None, min_samples_leaf=1, max_features=None,
                  random_state=None):
@@ -116,17 +108,17 @@ class ID3Tree:
             features = self.rng.choice(n_features, k, replace=False)
 
         best_gain, best_feature, best_threshold = 0.0, None, None
-        n_left = np.arange(1, n)                  # split after position i -> i+1 on left
+        n_left = np.arange(1, n)                  #split after position i -> i+1 on left
         n_right = n - n_left
         for f in features:
             order = np.argsort(X[:, f], kind="stable")
             xs, ys = X[order, f], y[order]
-            # left_counts[i] = class counts of the first i+1 sorted samples
+            #left_counts[i] = class counts of the first i+1 sorted samples
             left_counts = np.cumsum(np.eye(self.n_classes)[ys], axis=0)[:-1]
             right_counts = counts - left_counts
             children_h = (n_left * entropy(left_counts) + n_right * entropy(right_counts)) / n
             gain = parent_h - children_h
-            # only split between different values, and respect min_samples_leaf
+            #only split between different values, and respect min_samples_leaf
             valid = ((xs[:-1] < xs[1:]) & (n_left >= self.min_samples_leaf)
                      & (n_right >= self.min_samples_leaf))
             if not valid.any():
@@ -140,13 +132,13 @@ class ID3Tree:
 
     def _build(self, X, y, depth):
         counts = np.bincount(y, minlength=self.n_classes)
-        label = counts.argmax()                   # majority class
-        if (counts.max() == len(y)                # pure node
+        label = counts.argmax()                   #majority class
+        if (counts.max() == len(y)                #pure node
                 or (self.max_depth is not None and depth >= self.max_depth)
                 or len(y) < 2 * self.min_samples_leaf):
             return Node(label)
         feature, threshold = self._best_split(X, y, counts)
-        if feature is None:                       # no split gains information
+        if feature is None:                       #no split gains information
             return Node(label)
         go_left = X[:, feature] <= threshold
         return Node(label, feature, threshold,
@@ -159,7 +151,7 @@ class ID3Tree:
         return self.classes_[out]
 
     def _predict(self, node, X, idx, out):
-        # send all samples down the tree together, splitting the index array
+        #send all samples down the tree together, splitting the index array
         if node.feature is None:
             out[idx] = node.label
             return
@@ -169,19 +161,19 @@ class ID3Tree:
 
 
 class Forest:
-    """Hand-built random forest. Each tree is trained on:
-      - a bootstrap sample of the rows (drawn with replacement), and
-      - a random subset of the features (feature_frac of all columns).
-    Prediction is a simple majority vote between the trees."""
+    #each tree is trained on:
+    #  - a bootstrap sample of the rows (drawn with replacement), and
+    #  - a random subset of the features (feature_frac of all columns).
+    #prediction is a simple majority vote between the trees
 
     def __init__(self, n_trees=100, feature_frac=0.6, max_depth=None,
                  min_samples_leaf=1, split_features=None, own_tree=False, seed=SEED):
         self.n_trees = n_trees
-        self.own_tree = own_tree  # True: use our ID3Tree instead of sklearn's tree
+        self.own_tree = own_tree  #true: use our ID3Tree instead of sklearn's tree
         self.feature_frac = feature_frac
         self.max_depth = max_depth
         self.min_samples_leaf = min_samples_leaf
-        self.split_features = split_features  # extra per-split randomness (tree option)
+        self.split_features = split_features  #extra per-split randomness (tree option)
         self.seed = seed
 
     def fit(self, X, y):
@@ -189,7 +181,7 @@ class Forest:
         n_samples, n_features = X.shape
         n_keep = max(1, int(round(self.feature_frac * n_features)))
         self.classes_ = np.unique(y)
-        self.trees = []  # list of (tree, feature indices it was trained on)
+        self.trees = []  #list of (tree, feature indices it was trained on)
         for _ in range(self.n_trees):
             rows = rng.integers(0, n_samples, n_samples)           # bootstrap
             cols = np.sort(rng.choice(n_features, n_keep, replace=False))
@@ -203,7 +195,7 @@ class Forest:
         return self
 
     def predict(self, X):
-        # votes[i, c] = how many trees voted class c for sample i
+        #votes[i, c] = how many trees voted class c for sample i
         votes = np.zeros((X.shape[0], len(self.classes_)), dtype=int)
         class_pos = {c: i for i, c in enumerate(self.classes_)}
         for tree, cols in self.trees:
@@ -214,30 +206,29 @@ class Forest:
 
 def explore_forests(X, y):
     print("--- Forests ---")
-    # 1) How many trees? (more trees -> less variance, with diminishing returns)
+    #1) How many trees? (more trees -> less variance, with diminishing returns)
     for n_trees in [10, 50, 100, 200]:
         res = cross_validate(lambda: Forest(n_trees=n_trees), X, y)
         report(f"n_trees={n_trees}", res)
-    # 2) How many features per tree, and per-split randomness
+    #2) How many features per tree, and per-split randomness
     for frac in [0.3, 0.5, 0.7, 1.0]:
         for split in [None, "sqrt"]:
             res = cross_validate(lambda: Forest(n_trees=100, feature_frac=frac,
                                                 split_features=split), X, y)
             report(f"feature_frac={frac} split_features={split}", res)
-    # 3) Tree size inside the forest
+    #3) Tree size inside the forest
     for max_depth, min_leaf in [(None, 1), (None, 3), (None, 5), (12, 1), (12, 3)]:
         res = cross_validate(lambda: Forest(n_trees=100, max_depth=max_depth,
                                             min_samples_leaf=min_leaf), X, y)
         report(f"max_depth={max_depth} min_leaf={min_leaf}", res)
 
 
-EXPLORE = False  # set True to rerun the tree/forest hyperparameter searches (~25 min)
+EXPLORE = False  #set True to rerun the tree/forest hyperparameter searches
 
-# Best settings found by explore_forests: 100 trees, 60% of features per tree,
-# fully grown trees. More trees (200) or limiting depth did not help.
-# Bonus: the final forest is built from our own ID3Tree instead of sklearn's.
-# A single ID3Tree scores the same in CV as sklearn's entropy tree
-# (91.29% vs 91.20% balanced accuracy, fully grown), which checks it is correct.
+#best settings found by explore_forests: 100 trees, 60% of features per tree, fully grown trees
+#bonus - the final forest is built from our own ID3Tree instead of sklearn's.
+#a single ID3Tree scores the same in CV as sklearn's entropy tree
+#(91.29% vs 91.20% balanced accuracy, fully grown), which checks it is correct.
 def best_forest():
     return Forest(n_trees=100, feature_frac=0.6, max_depth=None, min_samples_leaf=1,
                   own_tree=True)
@@ -251,7 +242,7 @@ if __name__ == "__main__":
 
     report("Final forest (5-fold CV)", cross_validate(best_forest, X, y))
 
-    # Train on all labelled data, then predict the unlabelled test set
+    #train on all labelled data, then predict the unlabelled test set
     model = best_forest().fit(X, y)
     out = test.copy()
     out["Target"] = model.predict(test.to_numpy())
