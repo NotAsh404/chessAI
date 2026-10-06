@@ -39,7 +39,7 @@ def cross_validate(make_model, X, y, k=5, seed=SEED):
         scores["acc"].append(accuracy_score(y[val_idx], pred))
         scores["macro_f1"].append(f1_score(y[val_idx], pred, average="macro"))
     return {name: (np.mean(v), np.std(v)) for name, v in scores.items()}
-#trains on k-1 folds, the score is held-out on fold, repeat k times and make_model is a function returning a fresh, untrained model.
+#trains on k-1 folds and scores on the held-out fold, repeated k times. make_model is a function returning a fresh, untrained model.
 
 
 def report(name, res):
@@ -69,7 +69,7 @@ def entropy(counts):
 
 
 class Node:
-#if the feature is none (predicts `label`), otherwise a binary split - samples with x[feature] <= threshold go left, the rest go right.
+#a tree node. If feature is None it is a leaf that predicts label; otherwise samples with x[feature] <= threshold go left and the rest go right
 
     def __init__(self, label, feature=None, threshold=None, left=None, right=None):
         self.label = label
@@ -225,10 +225,10 @@ def explore_forests(X, y):
 
 EXPLORE = False  #set True to rerun the tree/forest hyperparameter searches
 
-#best settings found by explore_forests: 100 trees, 60% of features per tree, fully grown trees
+#final settings: 100 trees, 60% of features per tree, fully grown trees (chosen from the explore_forests results)
 #bonus - the final forest is built from our own ID3Tree instead of sklearn's.
 #a single ID3Tree scores the same in CV as sklearn's entropy tree
-#(91.29% vs 91.20% balanced accuracy, fully grown), which checks it is correct.
+#(91.29% vs 91.20% balanced accuracy, fully grown), which suggests it is correct.
 def best_forest():
     return Forest(n_trees=100, feature_frac=0.6, max_depth=None, min_samples_leaf=1,
                   own_tree=True)
