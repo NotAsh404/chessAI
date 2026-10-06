@@ -12,22 +12,21 @@ SEED = 42
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-# ----------------------------------------------------------------------------
+
 # Data
-# ----------------------------------------------------------------------------
+
 def load_data():
     train = pd.read_csv("dry_bean_train.csv")
     test = pd.read_csv("dry_bean_test.csv")
     X = train.drop(columns="Class").to_numpy(dtype=np.float32)
     labels = train["Class"].to_numpy()
-    classes = np.unique(labels)                       # sorted class names
-    y = np.searchsorted(classes, labels)              # name -> integer 0..6
+    classes = np.unique(labels) # sorted class names
+    y = np.searchsorted(classes, labels) # name -> integer 0..6
     return X, y, classes, test
 
 
 def make_folds(y, k=5, seed=SEED):
-    """Stratified k-fold, coded by hand: shuffle each class's indices and deal
-    them round-robin into k folds so every fold has the same class mix."""
+    """Stratified k-fold: shuffle each class's indices and deal them round-robin into k folds so every fold has the same class mix."""
     rng = np.random.default_rng(seed)
     folds = [[] for _ in range(k)]
     for cls in np.unique(y):
@@ -39,8 +38,7 @@ def make_folds(y, k=5, seed=SEED):
 
 
 class Standardiser:
-    """Scale each feature to mean 0, std 1. Fitted on training rows only so no
-    information from validation/test rows leaks into training."""
+    """Scale each feature to mean 0, std 1. Fitted on training rows only so no information from validation/test rows leaks into training."""
 
     def fit(self, X):
         self.mean = X.mean(axis=0)
@@ -65,15 +63,19 @@ class BeanDataset(Dataset):
         return self.X[i], self.y[i]
 
 
-# ----------------------------------------------------------------------------
 # Model and loss
-# ----------------------------------------------------------------------------
+
 ACTIVATIONS = {"relu": nn.ReLU, "leaky_relu": nn.LeakyReLU, "tanh": nn.Tanh}
 
 
 class BeanMLP(nn.Module):
-    """Input -> [Linear -> BatchNorm -> activation -> Dropout] x n_hidden -> Linear.
-    The output layer gives one raw score (logit) per class."""
+    """
+    Input -> [Linear -> BatchNorm -> activation -> Dropout] x n_hidden -> Linear
+    """
+
+    """
+    The output layer gives one raw score (logit) per class.
+    """
 
     def __init__(self, n_in, n_out, hidden=(64,), activation="relu", dropout=0.0):
         super().__init__()
@@ -93,20 +95,21 @@ class BeanMLP(nn.Module):
 
 
 def cross_entropy_loss(logits, targets):
-    """Cross-entropy written by hand. Softmax turns logits into probabilities;
+    """
+    Cross-entropy. Softmax turns logits into probabilities;
     the loss is -log(probability of the true class). Uses the log-sum-exp trick
-    (subtract the row max) so exp() can't overflow. Summed over the batch and
-    divided by the number of inputs, so the loss doesn't depend on batch size."""
+    """
+
+    """
+    (subtract the row max) so exp() can't overflow. Summed over the batch and divided by the number of inputs, so the loss doesn't depend on batch size.
+    """
     row_max = logits.max(dim=1, keepdim=True).values
     log_sum_exp = row_max.squeeze(1) + torch.log(torch.exp(logits - row_max).sum(dim=1))
     true_logit = logits.gather(1, targets.unsqueeze(1)).squeeze(1)
     log_prob_true = true_logit - log_sum_exp
     return -log_prob_true.sum() / logits.shape[0]
 
-
-# ----------------------------------------------------------------------------
 # Training / evaluation loops
-# ----------------------------------------------------------------------------
 def train_one_epoch(model, loader, optimiser):
     model.train()                       # BatchNorm uses batch stats, Dropout on
     total_loss, n = 0.0, 0
@@ -149,9 +152,9 @@ BASELINE = dict(hidden=(64,), activation="relu", lr=1e-3, batch_size=64,
 
 
 def train_model(X_tr, y_tr, X_val, y_val, cfg, n_classes, log_dir=None):
-    """Train one network. X_val is used for logging and (if patience is set) for
-    early stopping: stop once validation loss hasn't improved for `patience`
-    epochs, and restore the weights from the best epoch."""
+    """
+    Train one network. X_val is used for logging and (if patience is set) for early stopping: stop once validation loss hasn't improved for `patience` epochs, and restore the weights from the best epoch.
+    """
     torch.manual_seed(SEED)
     model = BeanMLP(X_tr.shape[1], n_classes, cfg["hidden"], cfg["activation"],
                     cfg["dropout"]).to(DEVICE)
@@ -181,13 +184,16 @@ def train_model(X_tr, y_tr, X_val, y_val, cfg, n_classes, log_dir=None):
     return model
 
 
-# ----------------------------------------------------------------------------
 # Cross validation
-# ----------------------------------------------------------------------------
+
 def cross_validate(cfg, X, y, n_classes, k=5, name=None):
-    """Hand-coded k-fold CV. Inside each training fold, 10% is split off as an
+    """
+    k-fold CV. Inside each training fold, 10% is split off as an
+
     inner validation set for loss logging / early stopping, so the held-out
-    fold is never seen during training."""
+
+    fold is never seen during training.
+    """
     folds = make_folds(y, k)
     scores = []
     for i in range(k):
@@ -214,7 +220,9 @@ def run(label, X, y, n_classes, **changes):
 
 
 def explore(X, y, n_classes):
-    """Change one hyperparameter at a time relative to the baseline."""
+    """
+    Change one hyperparameter at a time relative to the baseline.
+    """
     run("baseline", X, y, n_classes)
     for width in [16, 128, 256]:
         run(f"width_{width}", X, y, n_classes, hidden=(width,))
